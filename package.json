@@ -1,13 +1,14 @@
 {
   "name": "discord-moderation-bot",
-  "version": "1.0.0",
-  "description": "Discord Moderation Bot",
+  "version": "1.1.0",
+  "description": "Discord Moderation Bot mit AutoMod und Rollen",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1"
+    "discord.js": "^14.14.1",
+    "lowdb": "1.0.0"
   },
   "engines": {
     "node": ">=16.9.0"
