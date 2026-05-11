@@ -1,7 +1,7 @@
 {
   "name": "discord-moderation-bot",
-  "version": "1.1.0",
-  "description": "Discord Moderation Bot mit AutoMod und Rollen",
+  "version": "1.2.0",
+  "description": "Erweiterter Discord Moderation Bot mit deutschem Setup-System und AutoMod",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
