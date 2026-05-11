@@ -1,7 +1,6 @@
 {
-  "name": "discord-moderation-bot",
-  "version": "1.2.0",
-  "description": "Erweiterter Discord Moderation Bot mit deutschem Setup-System und AutoMod",
+  "name": "Germod",
+  "version": "4.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,8 +8,5 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "lowdb": "1.0.0"
-  },
-  "engines": {
-    "node": ">=16.9.0"
   }
 }
