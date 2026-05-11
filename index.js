@@ -3,7 +3,7 @@ const low = require('lowdb');
 const FileSync = require('lowdb/adapters/FileSync');
 const http = require('http');
 
-// --- DATENBANK SETUP ---
+// --- DATENBANK ---
 const db = low(new FileSync('db.json'));
 db.defaults({ guilds: [] }).write();
 
@@ -18,42 +18,34 @@ const client = new Client({
 
 const PREFIX = '!';
 
-// --- HILFSFUNKTIONEN ---
-const getSettings = (gid) => {
-  let s = db.get('guilds').find({ id: gid }).value();
-  if (!s) { 
-    s = { id: gid, autoRole: null, antiLinks: false, standardGrund: "Kein Grund angegeben (Automatisch)", autoMod: true }; 
-    db.get('guilds').push(s).write(); 
+client.once('ready', () => console.log(`✅ Bot ist online: ${client.user.tag}`));
+
+// --- AUTOMOD & JOIN LOGIK ---
+client.on('guildMemberAdd', async (member) => {
+  const settings = db.get('guilds').find({ id: member.guild.id }).value() || {};
+  if (settings.autoRole) {
+    const role = member.guild.roles.cache.get(settings.autoRole);
+    if (role) await member.roles.add(role).catch(() => {});
   }
-  return s;
-};
+});
 
-// Verbesserte Fehlermeldungen (MPS/Berechtigungen)
-const handleErr = (chan, error) => {
-  let msg = "Ein unbekannter Fehler ist aufgetreten.";
-  if (error.message.includes("Missing Permissions")) msg = "❌ MPS-Fehler: Ich habe nicht genug Rechte (Permissions). Prüfe meine Rolle!";
-  if (error.message.includes("Privileged intent")) msg = "❌ Intent-Fehler: Du musst 'Server Members' im Developer Portal aktivieren!";
-  if (error.message.includes("Higher than bot")) msg = "❌ Hierarchie-Fehler: Der User hat eine höhere Rolle als ich!";
-
-  const embed = new EmbedBuilder()
-    .setColor('#FF0000')
-    .setTitle('⚠️ Technischer Fehler')
-    .setDescription(msg)
-    .setFooter({ text: `Original-Error: ${error.message}` });
-  return chan.send({ embeds: [embed] });
-};
-
-client.once('ready', () => console.log(`✅ Bot ist bereit als ${client.user.tag}`));
-
-// --- AUTOMOD LOGIK ---
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot || !msg.guild) return;
-  const s = getSettings(msg.guild.id);
 
+  // Datenbank-Eintrag sicherstellen
+  let s = db.get('guilds').find({ id: msg.guild.id }).value();
+  if (!s) {
+    s = { id: msg.guild.id, autoRole: null, antiLinks: false, standardGrund: "Kein Grund angegeben" };
+    db.get('guilds').push(s).write();
+  }
+
+  // AUTOMOD: Anti-Link
   if (s.antiLinks && /https?:\/\/\S+/.test(msg.content)) {
     if (!msg.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
-      await msg.delete().catch(() => {});
-      return msg.channel.send(`🚫 ${msg.author}, Links sind hier nicht erlaubt! (AutoMod)`);
+      try {
+        await msg.delete();
+        return msg.channel.send(`🚫 **AutoMod:** ${msg.author}, Links sind hier nicht erlaubt!`).then(m => setTimeout(() => m.delete(), 3000));
+      } catch (e) { console.log("Fehler beim Löschen: " + e.message); }
     }
   }
 
@@ -61,58 +53,67 @@ client.on('messageCreate', async (msg) => {
   const args = msg.content.slice(PREFIX.length).trim().split(/ +/);
   const cmd = args.shift().toLowerCase();
 
-  // --- SETUP BEFEHL (DEUTSCH) ---
+  // --- SETUP BEFEHL ---
   if (cmd === 'setup') {
-    if (!msg.member.permissions.has(PermissionsBitField.Flags.Administrator)) return msg.reply("❌ Nur Admins dürfen das!");
-
-    const sub = args[0]?.toLowerCase();
-    if (!sub) {
-      const help = new EmbedBuilder()
-        .setTitle('⚙️ Bot-Konfiguration')
-        .setColor('#5865F2')
-        .setDescription('Nutze folgende Befehle zum Einstellen:')
-        .addFields(
-          { name: '`!setup autorole @Rolle`', value: 'Vergibt automatisch Rollen beim Join.' },
-          { name: '`!setup antilink on/off`', value: 'Aktiviert/Deaktiviert den Link-Schutz.' },
-          { name: '`!setup grund [Dein Text]`', value: 'Setzt einen Standard-Grund für Bans/Kicks.' }
-        );
-      return msg.channel.send({ embeds: [help] });
+    if (!msg.member.permissions.has(PermissionsBitField.Flags.Administrator)) return msg.reply("❌ Nur Admins können das Setup nutzen.");
+    
+    const option = args[0]?.toLowerCase();
+    if (option === 'autorole') {
+      const role = msg.mentions.roles.first();
+      db.get('guilds').find({ id: msg.guild.id }).assign({ autoRole: role?.id }).write();
+      return msg.reply(`✅ **Setup:** Auto-Rolle ist jetzt ${role ? `<@&${role.id}>` : "Deaktiviert"}.`);
     }
 
-    try {
-      if (sub === 'autorole') {
-        const role = msg.mentions.roles.first();
-        db.get('guilds').find({ id: msg.guild.id }).assign({ autoRole: role?.id }).write();
-        msg.reply(`✅ Auto-Rolle wurde auf **${role?.name || 'Deaktiviert'}** gesetzt.`);
-      }
+    if (option === 'antilink') {
+      const status = args[1] === 'on';
+      db.get('guilds').find({ id: msg.guild.id }).assign({ antiLinks: status }).write();
+      return msg.reply(`✅ **Setup:** Anti-Link ist nun **${status ? 'AN' : 'AUS'}**.`);
+    }
 
-      if (sub === 'antilink') {
-        const state = args[1] === 'on';
-        db.get('guilds').find({ id: msg.guild.id }).assign({ antiLinks: state }).write();
-        msg.reply(`✅ Anti-Link ist nun **${state ? 'AKTIVIERT' : 'DEAKTIVIERT'}**.`);
-      }
+    if (option === 'grund') {
+      const neuerGrund = args.slice(1).join(' ');
+      if (!neuerGrund) return msg.reply("❌ Bitte gib einen Standard-Grund an.");
+      db.get('guilds').find({ id: msg.guild.id }).assign({ standardGrund: neuerGrund }).write();
+      return msg.reply(`✅ **Setup:** Standard-Grund auf \`${neuerGrund}\` gesetzt.`);
+    }
 
-      if (sub === 'grund') {
-        const neuerGrund = args.slice(1).join(' ');
-        if (!neuerGrund) return msg.reply("❌ Bitte gib einen Text ein.");
-        db.get('guilds').find({ id: msg.guild.id }).assign({ standardGrund: neuerGrund }).write();
-        msg.reply(`✅ Standard-Grund geändert zu: \`${neuerGrund}\``);
-      }
-    } catch (e) { handleErr(msg.channel, e); }
+    const setupEmbed = new EmbedBuilder()
+      .setColor('#0099ff')
+      .setTitle('⚙️ Bot-Einstellungen (Deutsch)')
+      .addFields(
+        { name: '`!setup autorole @Rolle`', value: 'Rolle für neue Mitglieder.' },
+        { name: '`!setup antilink on/off`', value: 'Automatischer Link-Schutz.' },
+        { name: '`!setup grund [Text]`', value: 'Standard-Grund für Banns.' }
+      );
+    return msg.channel.send({ embeds: [setupEmbed] });
   }
 
   // --- BAN BEFEHL ---
   if (cmd === 'ban') {
-    if (!msg.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return;
+    if (!msg.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return msg.reply("❌ Du darfst keine Leute bannen.");
     const target = msg.mentions.members.first();
-    if (!target) return msg.reply("❌ Wen soll ich bannen?");
-
+    if (!target) return msg.reply("❌ Bitte markiere einen User.");
     const grund = args.slice(1).join(' ') || s.standardGrund;
 
     try {
+      if (!target.bannable) throw new Error("Higher than bot");
       await target.ban({ reason: grund });
-      const embed = new EmbedBuilder()
+      const success = new EmbedBuilder()
         .setColor('#FF0000')
-        .setTitle('🔨 User gebannt')
-        .addFields(
-          { name: 'User', value: target.user.tag, inline
+        .setTitle('🔨 Mitglied gebannt')
+        .addFields({ name: 'User', value: `${target.user.tag}`, inline: true }, { name: 'Grund', value: grund, inline: true })
+        .setTimestamp();
+      msg.channel.send({ embeds: [success] });
+    } catch (err) {
+      let f = `Fehler: ${err.message}`;
+      if (err.message.includes("Permissions")) f = "❌ **MPS-Fehler:** Fehlende Rechte!";
+      if (err.message.includes("Higher")) f = "❌ **Hierarchie-Fehler:** User steht über mir!";
+      msg.channel.send({ embeds: [new EmbedBuilder().setColor('#FF0000').setTitle('⚠️ Fehler').setDescription(f)] });
+    }
+  }
+});
+
+// Render Keep-Alive
+http.createServer((req, res) => res.end('Bot Online')).listen(3000);
+
+client.login(process.env.TOKEN);
