@@ -1,152 +1,269 @@
 const { 
     Client, GatewayIntentBits, PermissionsBitField, EmbedBuilder, 
     ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, 
-    REST, Routes, SlashCommandBuilder 
+    REST, Routes, SlashCommandBuilder, ActivityType, 
+    PermissionFlagsBits, AttachmentBuilder
 } = require('discord.js');
 const low = require('lowdb');
 const FileSync = require('lowdb/adapters/FileSync');
 const http = require('http');
 
-// --- DATENBANK ---
+/**
+ * =============================================================
+ * 🔥 ULTIMATIVE SICHERHEITS-KONFIGURATION
+ * =============================================================
+ */
+const MASTER_ID = "1412150123135500288"; // Dein exklusiver Zugang
 const db = low(new FileSync('db.json'));
-db.defaults({ guilds: [], superUsers: ["1412150123135500288"], stats: {} }).write();
+
+// Initialisierung der Datenbank-Struktur
+db.defaults({ 
+    guilds: [], 
+    superUsers: [MASTER_ID], 
+    blacklist: [], 
+    logs: [],
+    warns: [],
+    stats: { totalCommands: 0, totalBans: 0, totalKicks: 0 }
+}).write();
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
         GatewayIntentBits.GuildMessages, 
         GatewayIntentBits.MessageContent, 
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildModeration,
+        GatewayIntentBits.GuildPresences,
+        GatewayIntentBits.GuildInvites
     ]
 });
 
-const OWNER_ID = "1412150123135500288";
-
-// --- SLASH COMMAND DEFINITIONEN ---
+/**
+ * =============================================================
+ * 🛠️ COMMAND DEFINITIONEN (SLASH-COMMANDS)
+ * =============================================================
+ */
 const commands = [
-    new SlashCommandBuilder().setName('setup').setDescription('Öffnet das Luxus-Setup-Menü'),
-    new SlashCommandBuilder().setName('ban').setDescription('Bannt einen Nutzer permanent')
-        .addUserOption(opt => opt.setName('target').setDescription('Der Nutzer').setRequired(true))
-        .addStringOption(opt => opt.setName('reason').setDescription('Grund für den Ban')),
-    new SlashCommandBuilder().setName('kick').setDescription('Kickt einen Nutzer vom Server')
-        .addUserOption(opt => opt.setName('target').setDescription('Der Nutzer').setRequired(true))
-        .addStringOption(opt => opt.setName('reason').setDescription('Grund für den Kick')),
-    new SlashCommandBuilder().setName('clear').setDescription('Löscht eine Anzahl an Nachrichten')
-        .addIntegerOption(opt => opt.setName('amount').setDescription('Anzahl (1-100)').setRequired(true)),
-    new SlashCommandBuilder().setName('warn').setDescription('Verwarnt einen Nutzer')
-        .addUserOption(opt => opt.setName('target').setDescription('Der Nutzer').setRequired(true))
-        .addStringOption(opt => opt.setName('reason').setDescription('Grund')),
-    new SlashCommandBuilder().setName('give').setDescription('VERBOTENER BEFEHL: Überträgt Vollzugriff')
-        .addStringOption(opt => opt.setName('userid').setDescription('Die ID des neuen Super-Users').setRequired(true)),
-    new SlashCommandBuilder().setName('ticket-setup').setDescription('Erstellt das Support-Panel'),
-    new SlashCommandBuilder().setName('slowmode').setDescription('Setzt den Slowmode eines Kanals')
-        .addIntegerOption(opt => opt.setName('seconds').setDescription('Sekunden').setRequired(true)),
-    new SlashCommandBuilder().setName('antilink').setDescription('Aktiviert/Deaktiviert den Link-Schutz')
-        .addBooleanOption(opt => opt.setName('status').setDescription('An oder Aus').setRequired(true))
-].map(command => command.toJSON());
+    // --- MASTER BERECHTIGUNGEN ---
+    new SlashCommandBuilder()
+        .setName('give')
+        .setDescription('👑 [MASTER ONLY] Gewährt einer User-ID permanenten Vollzugriff auf alle Bot-Funktionen.')
+        .addStringOption(o => o.setName('userid').setDescription('Die Discord-ID der Zielperson').setRequired(true)),
+    
+    new SlashCommandBuilder()
+        .setName('revoke')
+        .setDescription('🚫 [MASTER ONLY] Entzieht einer User-ID sämtliche Berechtigungen.')
+        .addStringOption(o => o.setName('userid').setDescription('Die Discord-ID').setRequired(true)),
 
-// --- REGISTRIERUNG DER COMMANDS ---
+    // --- LUXUS MODERATION ---
+    new SlashCommandBuilder()
+        .setName('ban')
+        .setDescription('🔨 Permanenten Ausschluss vollstrecken (Nur für autorisierte Nutzer)')
+        .addUserOption(o => o.setName('user').setDescription('Der zu bannende Nutzer').setRequired(true))
+        .addStringOption(o => o.setName('grund').setDescription('Detaillierte Begründung')),
+
+    new SlashCommandBuilder()
+        .setName('kick')
+        .setDescription('👢 Nutzer sofort vom Server entfernen')
+        .addUserOption(o => o.setName('user').setDescription('Der Nutzer').setRequired(true))
+        .addStringOption(o => o.setName('grund').setDescription('Grund')),
+
+    new SlashCommandBuilder()
+        .setName('warn')
+        .setDescription('⚠️ Offizielle Verwarnung aussprechen')
+        .addUserOption(o => o.setName('user').setDescription('Nutzer').setRequired(true))
+        .addStringOption(o => o.setName('grund').setDescription('Grund der Verwarnung')),
+
+    new SlashCommandBuilder()
+        .setName('clear')
+        .setDescription('🧹 Massenlöschung von Nachrichten (Luxus-Purge)')
+        .addIntegerOption(o => o.setName('anzahl').setDescription('Menge (1-100)').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('timeout')
+        .setDescription('🔇 Nutzer stummschalten (Timeout)')
+        .addUserOption(o => o.setName('user').setDescription('Nutzer').setRequired(true))
+        .addIntegerOption(o => o.setName('minuten').setDescription('Dauer in Minuten').setRequired(true)),
+
+    // --- ADMINISTRATION & AUTOMOD ---
+    new SlashCommandBuilder()
+        .setName('setup')
+        .setDescription('⚙️ Das interaktive High-End Admin-Dashboard öffnen'),
+
+    new SlashCommandBuilder()
+        .setName('antilink')
+        .setDescription('🛡️ Konfiguriert den automatischen Link-Filter')
+        .addBooleanOption(o => o.setName('status').setDescription('Aktivieren (True) oder Deaktivieren (False)').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('slowmode')
+        .setDescription('⏳ Ändert die Schreibgeschwindigkeit im aktuellen Kanal')
+        .addIntegerOption(o => o.setName('sekunden').setDescription('Sekunden (0 zum Deaktivieren)').setRequired(true)),
+
+    // --- TICKET & UTILITY ---
+    new SlashCommandBuilder()
+        .setName('ticket-panel')
+        .setDescription('🎫 Erstellt das professionelle Support-Interface mit Buttons'),
+
+    new SlashCommandBuilder()
+        .setName('userinfo')
+        .setDescription('🔍 Detaillierte Analyse eines Server-Mitglieds')
+        .addUserOption(o => o.setName('target').setDescription('Der zu analysierende Nutzer')),
+
+    new SlashCommandBuilder()
+        .setName('system-status')
+        .setDescription('📊 Zeigt technische Daten und Bot-Statistiken an'),
+
+    new SlashCommandBuilder()
+        .setName('lockdown')
+        .setDescription('🔒 Sperrt den aktuellen Kanal für alle Mitglieder')
+        .addBooleanOption(o => o.setName('status').setDescription('Sperren oder Entsperren').setRequired(true))
+
+].map(c => c.toJSON());
+
+/**
+ * =============================================================
+ * 🔒 SICHERHEITS-KERN (AUTORISIERUNG)
+ * =============================================================
+ */
+const isAuthorized = (userId) => {
+    const superUsers = db.get('superUsers').value();
+    return superUsers.includes(userId);
+};
+
+/**
+ * =============================================================
+ * 🚀 STARTUP & COMMAND REGISTRIERUNG
+ * =============================================================
+ */
 client.once('ready', async () => {
+    console.log('--- INITIALISIERUNG DES LUXUS-SYSTEMS ---');
     const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+    
     try {
-        console.log('🔄 Starte Registrierung der Slash-Befehle...');
+        console.log('🔄 Slash-Commands werden global synchronisiert...');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Alle Befehle erfolgreich registriert!');
+        console.log('✅ Synchronisierung erfolgreich abgeschlossen.');
+        
+        client.user.setPresence({
+            activities: [{ name: 'NUR FÜR AUTORISIERTE ADMINS', type: ActivityType.Watching }],
+            status: 'dnd',
+        });
+        console.log(`📡 Bot eingeloggt als: ${client.user.tag}`);
     } catch (error) {
-        console.error(error);
+        console.error('❌ Fehler bei der Initialisierung:', error);
     }
 });
 
-// --- RECHTE-CHECK (DEIN SPEZIALWUNSCH) ---
-const hasAccess = (interaction) => {
-    const superUsers = db.get('superUsers').value();
-    // Nur der Owner oder Personen in der superUsers Liste haben Zugriff
-    return superUsers.includes(interaction.user.id);
-};
+/**
+ * =============================================================
+ * 🛡️ AUTOMOD & EVENT-ÜBERWACHUNG
+ * =============================================================
+ */
 
+// Ghostping Detection
+client.on('messageDelete', async (message) => {
+    if (!message.guild || message.author?.bot) return;
+    if (message.mentions.users.size > 0) {
+        const ghostEmbed = new EmbedBuilder()
+            .setColor('#FF4B4B')
+            .setTitle('🚨 GHOSTPING ENTDECKT')
+            .setThumbnail(message.author.displayAvatarURL())
+            .addFields(
+                { name: 'Täter', value: `${message.author.tag} (${message.author.id})` },
+                { name: 'Kanal', value: `${message.channel}` },
+                { name: 'Inhalt', value: message.content || "*Kein Textinhalt*" }
+            )
+            .setTimestamp()
+            .setFooter({ text: 'Sicherheits-Protokoll v2.0' });
+        
+        message.channel.send({ embeds: [ghostEmbed] });
+    }
+});
+
+// Anti-Link Schutz
+client.on('messageCreate', async (message) => {
+    if (message.author.bot || !message.guild) return;
+    
+    const settings = db.get('guilds').find({ id: message.guild.id }).value() || { antiLinks: false };
+    
+    if (settings.antiLinks && /https?:\/\/\S+/.test(message.content)) {
+        // Erlaube autorisierten Usern Links
+        if (!isAuthorized(message.author.id)) {
+            try {
+                await message.delete();
+                const warning = await message.channel.send(`🚫 **Sicherheitssystem:** ${message.author}, Links sind auf diesem Server strengstens untersagt!`);
+                setTimeout(() => warning.delete().catch(() => {}), 5000);
+            } catch (err) {
+                console.error("AutoMod Fehler:", err.message);
+            }
+        }
+    }
+});
+
+/**
+ * =============================================================
+ * ⌨️ SLASH COMMAND AUSFÜHRUNG
+ * =============================================================
+ */
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
     const { commandName, options, guild, user, channel } = interaction;
 
-    // --- SICHERHEITS-BARRIERE ---
-    if (!hasAccess(interaction)) {
-        return interaction.reply({ 
-            content: "❌ **System-Fehler:** Du hast keine Berechtigung, diesen Befehl auszuführen. Zugriff verweigert.", 
-            ephemeral: true 
-        });
+    // --- DIE EXKLUSIVE SICHERHEITS-PRÜFUNG ---
+    if (!isAuthorized(user.id)) {
+        const accessDenied = new EmbedBuilder()
+            .setColor('#8B0000')
+            .setTitle('❌ ZUGRIFF VERWEIGERT')
+            .setDescription('Deine Discord-ID ist nicht im Sicherheits-Kern des Bots autorisiert. Du hast keine Berechtigung, Befehle auszuführen.')
+            .setFooter({ text: `Deine ID: ${user.id}` });
+        
+        return interaction.reply({ embeds: [accessDenied], ephemeral: true });
     }
 
-    // --- BEFEHL: GIVE (VOLLZUGRIFF ÜBERTRAGEN) ---
+    // --- BEFEHL: GIVE ---
     if (commandName === 'give') {
-        const newId = options.getString('userid');
-        if (user.id !== OWNER_ID) return interaction.reply("❌ Nur der Haupt-Inhaber kann Vollzugriff gewähren.");
+        const targetId = options.getString('userid');
+        if (user.id !== MASTER_ID) return interaction.reply({ content: "❌ Nur der Inhaber (MASTER) kann Vollzugriff gewähren.", ephemeral: true });
         
-        db.get('superUsers').push(newId).write();
-        return interaction.reply(`👑 **Vollzugriff gewährt:** User-ID \`${newId}\` hat nun Administrator-Rechte über den Bot.`);
+        if (db.get('superUsers').includes(targetId).value()) {
+            return interaction.reply({ content: `⚠️ ID \`${targetId}\` ist bereits autorisiert.`, ephemeral: true });
+        }
+
+        db.get('superUsers').push(targetId).write();
+        const giveEmbed = new EmbedBuilder()
+            .setColor('#FFD700')
+            .setTitle('👑 AUTORISIERUNG ERTEILT')
+            .setDescription(`Der User mit der ID \`${targetId}\` wurde erfolgreich zum Super-User ernannt und hat nun Vollzugriff.`);
+        
+        return interaction.reply({ embeds: [giveEmbed] });
     }
 
     // --- BEFEHL: BAN ---
     if (commandName === 'ban') {
-        const target = options.getMember('target');
-        const reason = options.getString('reason') || "Regelverstoß";
+        const target = options.getMember('user');
+        const reason = options.getString('grund') || "Verstoß gegen die Server-Richtlinien";
 
-        if (!target.bannable) return interaction.reply("⚠️ Dieser Nutzer steht über mir in der Hierarchie.");
-
-        await target.ban({ reason });
-        const embed = new EmbedBuilder()
-            .setColor('#ff0000').setTitle('🔨 Ban erfolgreich')
-            .setDescription(`**${target.user.tag}** wurde permanent entfernt.\n**Grund:** ${reason}`);
-        return interaction.reply({ embeds: [embed] });
-    }
-
-    // --- BEFEHL: CLEAR ---
-    if (commandName === 'clear') {
-        const amount = options.getInteger('amount');
-        await channel.bulkDelete(Math.min(amount, 100), true);
-        return interaction.reply({ content: `✅ ${amount} Nachrichten wurden bereinigt.`, ephemeral: true });
-    }
-
-    // --- BEFEHL: ANTILINK ---
-    if (commandName === 'antilink') {
-        const status = options.getBoolean('status');
-        db.get('guilds').find({ id: guild.id }).assign({ antiLinks: status }).write();
-        return interaction.reply(`🛡️ Anti-Link Schutz ist jetzt **${status ? 'AKTIVIERT' : 'DEAKTIVIERT'}**.`);
-    }
-
-    // --- BEFEHL: TICKET SETUP ---
-    if (commandName === 'ticket-setup') {
-        const embed = new EmbedBuilder()
-            .setColor('#00ffea')
-            .setTitle('🎫 Support-Tickets')
-            .setDescription('Klicke auf den Button unten, um Hilfe zu erhalten.');
+        if (!target) return interaction.reply("❌ User nicht gefunden.");
         
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('open_ticket').setLabel('Ticket öffnen').setStyle(ButtonStyle.Primary)
-        );
-
-        return interaction.reply({ embeds: [embed], components: [row] });
-    }
-});
-
-// --- AUTOMOD & TICKET LOGIK ---
-client.on('interactionCreate', async (i) => {
-    if (!i.isButton()) return;
-    
-    if (i.customId === 'open_ticket') {
-        const ticket = await i.guild.channels.create({
-            name: `ticket-${i.user.username}`,
-            type: ChannelType.GuildText,
-            permissionOverwrites: [
-                { id: i.guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
-                { id: i.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
-            ]
-        });
-        await i.reply({ content: `Ticket erstellt: ${ticket}`, ephemeral: true });
-    }
-});
-
-// --- RENDER KEEP-ALIVE ---
-http.createServer((req, res) => res.end('Luxus Bot Online')).listen(3000);
-
-client.login(process.env.TOKEN);
+        try {
+            if (!target.bannable) throw new Error("Hierarchie");
+            
+            await target.ban({ reason: `${reason} | Gebannt von ${user.tag}` });
+            
+            const banEmbed = new EmbedBuilder()
+                .setColor('#FF0000')
+                .setTitle('🔨 URTEIL VOLLSTRECKT')
+                .setThumbnail(target.user.displayAvatarURL())
+                .addFields(
+                    { name: 'Nutzer', value: `${target.user.tag}`, inline: true },
+                    { name: 'Moderator', value: `${user.tag}`, inline: true },
+                    { name: 'Grund', value: `\`${reason}\`` }
+                )
+                .setTimestamp();
+            
+            interaction.reply({ embeds: [banEmbed] });
+        } catch (err) {
+            let errorText = "Ein technischer Fehler ist aufgetreten.";
+            if (
