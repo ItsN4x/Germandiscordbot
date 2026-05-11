@@ -1,6 +1,7 @@
 {
-  "name": "Germod",
-  "version": "4.0.0",
+  "name": "germod-luxury-system",
+  "version": "9.0.0",
+  "description": "Exklusives High-End Moderations-System für germod",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -8,5 +9,8 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "lowdb": "1.0.0"
+  },
+  "engines": {
+    "node": ">=16.9.0"
   }
 }
